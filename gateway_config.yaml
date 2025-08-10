@@ -1,26 +1,18 @@
 gateway:
   host: "0.0.0.0"
-  port: 8000
+  port: 7777
   debug: true
   title: "Unified API Gateway"
   version: "1.0.0"
-  description: "Gateway tích hợp 3 services với dynamic loading"
+  description: "Dynamic API Gateway with modular service integration"
   
 services:
-  user_service:
-    database_url: "postgresql://localhost/gateway_users"
-    redis_url: "redis://localhost:6379/1"
-    jwt_secret: "user-jwt-secret"
-    log_level: "DEBUG"
-    
-  product_service:
-    database_url: "postgresql://localhost/gateway_products"
-    elasticsearch_url: "http://localhost:9200"
-    cache_ttl: 300
+  docman_service:
+    # Document management service configuration
+    database_url: "postgresql://localhost/docman_db"
+    minio_endpoint: "localhost:9000"
+    minio_access_key: "minioadmin"
+    minio_secret_key: "minioadmin"
+    minio_bucket: "documents"
+    qdrant_url: "http://localhost:6333"
     log_level: "INFO"
-    
-  order_service:
-    database_url: "mongodb://localhost/gateway_orders"
-    payment_service_url: "http://localhost:9000"
-    log_level: "INFO"
-    max_retries: 3
