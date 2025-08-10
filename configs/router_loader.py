@@ -262,40 +262,6 @@ class DynamicRouterLoader:
         return self.load_router(app, config)
 
 
-# Configuration for the 3 external services
-# These will be updated when the actual repositories are available
-ROUTER_CONFIGS = [
-    RouterConfig(
-        service_name="user_service",
-        module_path="external/user-service/app/main.py",
-        router_name="router",
-        prefix="/api/v1/users",
-        tags=["User Service"],
-        include_endpoints={"/users", "/auth", "/profile"},
-        config_name="user_service"
-    ),
-    RouterConfig(
-        service_name="product_service", 
-        module_path="external/product-service/app/main.py",
-        router_name="router",
-        prefix="/api/v1/products",
-        tags=["Product Service"],
-        include_endpoints={"/products", "/categories", "/inventory"},
-        config_name="product_service"
-    ),
-    RouterConfig(
-        service_name="order_service",
-        module_path="external/order-service/app/main.py", 
-        router_name="router",
-        prefix="/api/v1/orders",
-        tags=["Order Service"],
-        include_endpoints={"/orders", "/cart", "/checkout"},
-        exclude_endpoints={"/admin"},
-        config_name="order_service"
-    )
-]
-
-
 def create_test_router() -> APIRouter:
     """Create a test router for development/testing purposes"""
     test_router = APIRouter()

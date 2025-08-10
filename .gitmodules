@@ -1,0 +1,4 @@
+[submodule "external/docman"]
+	path = external/docman
+	url = https://github.com/pythera-ai/docman.git
+	branch = dev

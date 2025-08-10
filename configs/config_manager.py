@@ -11,7 +11,7 @@ import logging
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 from dataclasses import dataclass, field
-from pydantic import BaseSettings, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings as PydanticBaseSettings
 from dotenv import load_dotenv
 

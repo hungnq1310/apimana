@@ -10,15 +10,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 import sys
+import os
 from pathlib import Path
 
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, "/home/tiennv/hungnq/apimana/external/docman")
 
 try:
-    from configs.router_loader import DynamicRouterLoader, ROUTER_CONFIGS
+    from configs.router_loader import DynamicRouterLoader, RouterConfig
     from configs.config_manager import UnifiedConfigManager
 except ImportError as e:
     print(f"Import error: {e}")
@@ -34,20 +36,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Configuration for external services
+ROUTER_CONFIGS = [
+    # Document Management Service (docman)
+    RouterConfig(
+        service_name="docman_service",
+        module_path="external/docman/src/api/routes/documents.py",
+        router_name="router",
+        prefix="/api/v1/documents",
+        tags=["Document Management"],
+        config_name="docman_service"
+    )
+]
+
+
 class APIGateway:
     """
-    Main API Gateway class that orchestrates router loading and config management
+    Main API Gateway class that orchestrates router loading and config management.
     """
     
     def __init__(self, config_file: str = "gateway_config.yaml"):
         self.config_file = config_file
-        self.config_manager = None
-        self.router_loader = None
-        self.app = None
-        self.gateway_config = {}
+        self.config_manager: Optional[UnifiedConfigManager] = None
+        self.router_loader: Optional[DynamicRouterLoader] = None
+        self.app: Optional[FastAPI] = None
+        self.gateway_config: Dict[str, Any] = {}
         
-    def initialize(self) -> FastAPI:
-        """Initialize the API Gateway"""
+    def create_app(self) -> FastAPI:
+        """Create and configure the FastAPI application"""
         logger.info("Initializing API Gateway...")
         
         # Initialize configuration manager
@@ -57,31 +73,60 @@ class APIGateway:
         # Create FastAPI application
         self.app = FastAPI(
             title=self.gateway_config.get("title", "Dynamic API Gateway"),
-            description=self.gateway_config.get("description", "Gateway tích hợp 3 services với dynamic loading"),
+            description=self.gateway_config.get("description", "Generic API Gateway with dynamic service loading"),
             version=self.gateway_config.get("version", "1.0.0"),
             debug=self.gateway_config.get("debug", False)
         )
         
-        # Setup CORS
+        # Setup application components
         self._setup_cors()
-        
-        # Setup base routes
+        self._setup_error_handlers()
         self._setup_base_routes()
         
-        # Initialize router loader
+        # Initialize router loader and setup services
         self.router_loader = DynamicRouterLoader()
-        
-        # Setup configurations for all services
         self._setup_service_configurations()
-        
-        # Load and mount routers
         self._load_routers()
         
         logger.info("API Gateway initialization complete")
         return self.app
     
+    def _setup_error_handlers(self) -> None:
+        """Register error handlers for the application"""
+        if not self.app:
+            return
+        
+        @self.app.exception_handler(404)
+        async def not_found_handler(request, exc):
+            """Handle 404 errors"""
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "Not Found",
+                    "message": "The requested resource was not found",
+                    "path": str(request.url.path)
+                }
+            )
+
+        @self.app.exception_handler(500)
+        async def server_error_handler(request, exc):
+            """Handle 500 errors"""
+            logger.error(f"Internal server error: {exc}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Internal Server Error",
+                    "message": "An internal server error occurred"
+                }
+            )
+        
+        logger.info("Error handlers registered")
+    
     def _setup_cors(self) -> None:
         """Setup CORS middleware"""
+        if not self.app:
+            return
+            
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],  # Configure appropriately for production
@@ -93,6 +138,8 @@ class APIGateway:
     
     def _setup_base_routes(self) -> None:
         """Setup base routes for the gateway"""
+        if not self.app:
+            return
         
         @self.app.get("/", tags=["Gateway"])
         async def root():
@@ -116,68 +163,77 @@ class APIGateway:
         @self.app.get("/gateway/status", tags=["Gateway"])
         async def gateway_status():
             """Detailed gateway status"""
-            router_status = self.router_loader.get_status() if self.router_loader else {}
-            config_status = self.config_manager.get_config_status() if self.config_manager else {}
-            
             return {
                 "gateway_config": self.gateway_config,
-                "router_status": router_status,
-                "config_status": config_status
+                "router_status": self.router_loader.get_status() if self.router_loader else {},
+                "config_status": self.config_manager.get_config_status() if self.config_manager else {}
             }
         
         @self.app.get("/gateway/services", tags=["Gateway"])
         async def list_services():
             """List all available services and their endpoints"""
-            if not self.router_loader:
-                return {"services": []}
-            
-            services = []
-            for config in ROUTER_CONFIGS:
-                service_info = {
-                    "name": config.service_name,
-                    "prefix": config.prefix,
-                    "tags": config.tags,
-                    "status": "loaded" if config.service_name in self.router_loader.loaded_routers else "failed"
-                }
-                
-                if config.include_endpoints:
-                    service_info["included_endpoints"] = list(config.include_endpoints)
-                if config.exclude_endpoints:
-                    service_info["excluded_endpoints"] = list(config.exclude_endpoints)
-                
-                services.append(service_info)
-            
-            return {"services": services}
+            return {"services": self._get_services_info()}
         
         @self.app.post("/gateway/reload/{service_name}", tags=["Gateway"])
         async def reload_service(service_name: str):
             """Reload a specific service (development only)"""
-            if not self.gateway_config.get("debug", False):
-                raise HTTPException(status_code=403, detail="Reload only available in debug mode")
+            return self._reload_service(service_name)
+    
+    def _get_services_info(self) -> List[Dict[str, Any]]:
+        """Get information about all configured services"""
+        if not self.router_loader:
+            return []
+        
+        services = []
+        for config in ROUTER_CONFIGS:
+            service_info = {
+                "name": config.service_name,
+                "prefix": config.prefix,
+                "tags": config.tags,
+                "status": "loaded" if config.service_name in self.router_loader.loaded_routers else "failed"
+            }
             
-            if not self.router_loader:
-                raise HTTPException(status_code=500, detail="Router loader not initialized")
+            if hasattr(config, 'include_endpoints') and config.include_endpoints:
+                service_info["included_endpoints"] = list(config.include_endpoints)
+            if hasattr(config, 'exclude_endpoints') and config.exclude_endpoints:
+                service_info["excluded_endpoints"] = list(config.exclude_endpoints)
             
-            # Find the service config
-            service_config = None
-            for config in ROUTER_CONFIGS:
-                if config.service_name == service_name:
-                    service_config = config
-                    break
-            
-            if not service_config:
-                raise HTTPException(status_code=404, detail=f"Service {service_name} not found")
-            
-            # Reload the service
-            success = self.router_loader.reload_router(self.app, service_config)
-            if success:
-                return {"message": f"Service {service_name} reloaded successfully"}
-            else:
-                raise HTTPException(status_code=500, detail=f"Failed to reload service {service_name}")
+            services.append(service_info)
+        
+        return services
+    
+    def _reload_service(self, service_name: str) -> Dict[str, str]:
+        """Reload a specific service"""
+        if not self.gateway_config.get("debug", False):
+            raise HTTPException(status_code=403, detail="Reload only available in debug mode")
+        
+        if not self.router_loader or not self.app:
+            raise HTTPException(status_code=500, detail="Gateway components not initialized")
+        
+        # Find the service config
+        service_config = None
+        for config in ROUTER_CONFIGS:
+            if config.service_name == service_name:
+                service_config = config
+                break
+        
+        if not service_config:
+            raise HTTPException(status_code=404, detail=f"Service {service_name} not found")
+        
+        # Reload the service
+        success = self.router_loader.reload_router(self.app, service_config)
+        if success:
+            return {"message": f"Service {service_name} reloaded successfully"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to reload service {service_name}")
     
     def _setup_service_configurations(self) -> None:
         """Setup configurations for all services"""
         logger.info("Setting up service configurations...")
+        
+        if not self.config_manager:
+            logger.error("Configuration manager not initialized")
+            return
         
         try:
             # Setup configs for services that have config names
@@ -199,6 +255,10 @@ class APIGateway:
     def _load_routers(self) -> None:
         """Load and mount all routers"""
         logger.info("Loading routers...")
+        
+        if not self.router_loader or not self.app:
+            logger.error("Router loader or app not initialized")
+            return
         
         try:
             # Load all routers
@@ -247,51 +307,21 @@ class APIGateway:
 
 # Global gateway instance
 gateway = APIGateway()
-
-
-def create_app() -> FastAPI:
-    """Factory function to create the FastAPI app"""
-    return gateway.initialize()
+# Create the app instance for uvicorn to import
+app = gateway.create_app()
 
 
 def run_development_server() -> None:
     """Run the development server"""
-    app = create_app()
     config = gateway.gateway_config
     
+    # Use import string for reload functionality
     uvicorn.run(
-        app,
+        "main:app",  # Use import string instead of app instance
         host=config.get("host", "0.0.0.0"),
         port=config.get("port", 8000),
         reload=config.get("debug", False),
         log_level="info" if not config.get("debug", False) else "debug"
-    )
-
-
-# Error handlers
-@gateway.app.exception_handler(404) if gateway.app else None
-async def not_found_handler(request, exc):
-    """Handle 404 errors"""
-    return JSONResponse(
-        status_code=404,
-        content={
-            "error": "Not Found",
-            "message": "The requested resource was not found",
-            "path": str(request.url.path)
-        }
-    )
-
-
-@gateway.app.exception_handler(500) if gateway.app else None
-async def server_error_handler(request, exc):
-    """Handle 500 errors"""
-    logger.error(f"Internal server error: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal Server Error",
-            "message": "An internal server error occurred"
-        }
     )
 
 
