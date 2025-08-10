@@ -27,7 +27,6 @@ class RouterConfig:
     module_path: str
     router_name: str = "router"
     prefix: str = ""
-    tags: List[str] = field(default_factory=list)
     include_endpoints: Optional[Set[str]] = None
     exclude_endpoints: Optional[Set[str]] = None
     config_name: Optional[str] = None
@@ -37,8 +36,6 @@ class RouterConfig:
         """Post-initialization to set default values"""
         if not self.prefix:
             self.prefix = f"/{self.service_name}"
-        if not self.tags:
-            self.tags = [self.service_name.replace("_", " ").title()]
         if not self.config_name:
             self.config_name = self.service_name
 
@@ -70,9 +67,27 @@ class DynamicRouterLoader:
             APIRouter instance or None if loading fails
         """
         try:
-            # Add external path if needed
-            module_dir = Path(config.module_path).parent
-            self.add_external_path(str(module_dir))
+            # Add external path if needed - handle special case for services with src/ structure
+            module_path = Path(config.module_path)
+            module_dir = module_path.parent
+            
+            # For services with src/ structure, add the root directory to path
+            # This handles cases like external/docman/src/api/routes/documents.py
+            if 'src' in module_path.parts:
+                # Find the parent directory that contains 'src'
+                for i, part in enumerate(module_path.parts):
+                    if part == 'src':
+                        # Add the directory that contains 'src' to Python path
+                        src_parent = Path(*module_path.parts[:i])
+                        if src_parent.is_absolute():
+                            self.add_external_path(str(src_parent))
+                        else:
+                            # Make it relative to current working directory
+                            self.add_external_path(str(Path.cwd() / src_parent))
+                        break
+            else:
+                # For other services, add the module directory
+                self.add_external_path(str(module_dir))
             
             # Import the module
             if Path(config.module_path).suffix == '.py':
@@ -135,8 +150,7 @@ class DynamicRouterLoader:
             New APIRouter with filtered endpoints
         """
         new_router = APIRouter(
-            prefix=config.prefix,
-            tags=config.tags
+            prefix=config.prefix
         )
         
         for route in original_router.routes:
@@ -183,13 +197,12 @@ class DynamicRouterLoader:
         if router:
             app.include_router(
                 router,
-                prefix=config.prefix,
-                tags=config.tags
+                prefix=config.prefix
             )
             self.router_configs.append(config)
             logger.info(
                 f"Mounted router for {config.service_name} "
-                f"at prefix '{config.prefix}' with tags {config.tags}"
+                f"at prefix '{config.prefix}'"
             )
             return True
         return False
@@ -290,8 +303,7 @@ if __name__ == "__main__":
         service_name="test_service",
         module_path="test_router",  # This would normally be a file path
         router_name="test_router",
-        prefix="/test",
-        tags=["Test"]
+        prefix="/test"
     )
     
     # For testing, we'll manually add the test router
