@@ -198,42 +198,7 @@ class ConfigInjector:
     def get_injected_config(self, service_name: str) -> Optional[Dict[str, Any]]:
         """Get previously injected configuration for a service"""
         return self.injected_configs.get(service_name)
-    
-    def create_pydantic_settings(self, service_name: str) -> type:
-        """
-        Create a Pydantic Settings class for a service
-        
-        Args:
-            service_name: Name of the service
-            
-        Returns:
-            Dynamically created Pydantic Settings class
-        """
-        service_config = self.config_loader.get_service_config(service_name)
-        env_prefix = f"{service_name.upper()}_"
-        
-        # Create field definitions
-        field_definitions = {}
-        for key, value in service_config.items():
-            field_definitions[key] = Field(default=value, env=f"{env_prefix}{key.upper()}")
-        
-        # Create the settings class
-        class_name = f"{service_name.title().replace('_', '')}Settings"
-        
-        settings_class = type(
-            class_name,
-            (PydanticBaseSettings,),
-            {
-                **field_definitions,
-                "model_config": {
-                    "env_prefix": env_prefix,
-                    "env_file": ".env",
-                    "env_file_encoding": "utf-8"
-                }
-            }
-        )
-        
-        return settings_class
+
 
 
 class UnifiedConfigManager:
@@ -259,12 +224,11 @@ class UnifiedConfigManager:
         # Inject environment variables
         config = self.config_injector.inject_service_config(service_name)
         
-        # Create Pydantic settings class
-        settings_class = self.config_injector.create_pydantic_settings(service_name)
-        settings_instance = settings_class()
+        # Create Dict service config
+        service_config = self.config_loader.get_service_config(service_name)
         
         # Store settings instance
-        self.service_settings[service_name] = settings_instance
+        self.service_settings[service_name] = service_config
         
         logger.info(f"Setup complete for {service_name}")
         return config
