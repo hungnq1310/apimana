@@ -14,6 +14,10 @@ from typing import Dict, Any, Optional, List
 import sys
 import os
 from pathlib import Path
+from contextlib import AsyncExitStack, asynccontextmanager
+
+from fastapi import FastAPI
+from starlette.routing import Mount
 
 # Add current directory to Python path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -41,12 +45,23 @@ ROUTER_CONFIGS = [
     # Document Management Service (docman)
     RouterConfig(
         service_name="docman_service",
-        module_path="external/docman/src/api/routes/documents.py",
-        router_name="router",
-        prefix="/api/v1/documents",
+        module_path="external/docman/src/api/main.py",
+        app_name="app",
+        prefix="appv1",
         config_name="docman_service"
     )
 ]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with AsyncExitStack() as stack:
+        for route in app.routes:
+            if isinstance(route, Mount) and isinstance(route.app, FastAPI):
+                await stack.enter_async_context(
+                    route.app.router.lifespan_context(route.app),  # noqa
+                )
+        yield
 
 
 class APIGateway:
@@ -180,13 +195,8 @@ class APIGateway:
             service_info = {
                 "name": config.service_name,
                 "prefix": config.prefix,
-                "status": "loaded" if config.service_name in self.router_loader.loaded_routers else "failed"
+                "status": "loaded" if config.service_name in self.router_loader.loaded_apps else "failed"
             }
-            
-            if hasattr(config, 'include_endpoints') and config.include_endpoints:
-                service_info["included_endpoints"] = list(config.include_endpoints)
-            if hasattr(config, 'exclude_endpoints') and config.exclude_endpoints:
-                service_info["excluded_endpoints"] = list(config.exclude_endpoints)
             
             services.append(service_info)
         
@@ -211,7 +221,7 @@ class APIGateway:
             raise HTTPException(status_code=404, detail=f"Service {service_name} not found")
         
         # Reload the service
-        success = self.router_loader.reload_router(app, service_config)
+        success = self.router_loader.reload_app(app, service_config)
         if success:
             return {"message": f"Service {service_name} reloaded successfully"}
         else:
@@ -252,7 +262,7 @@ class APIGateway:
         
         try:
             # Load all routers
-            results = self.router_loader.load_all_routers(app, ROUTER_CONFIGS)
+            results = self.router_loader.load_all_apps(app, ROUTER_CONFIGS)
             
             # Log results
             successful = [name for name, success in results.items() if success]
@@ -273,7 +283,7 @@ class APIGateway:
         
         status = {}
         for config in ROUTER_CONFIGS:
-            if config.service_name in self.router_loader.loaded_routers:
+            if config.service_name in self.router_loader.loaded_apps:
                 status[config.service_name] = "loaded"
             elif config.service_name in self.router_loader.failed_loads:
                 status[config.service_name] = "failed"
@@ -304,7 +314,8 @@ app = FastAPI(
     title=gateway.gateway_config.get("title", "Dynamic API Gateway"),
     description=gateway.gateway_config.get("description", "Generic API Gateway with dynamic service loading"),
     version=gateway.gateway_config.get("version", "1.0.0"),
-    debug=gateway.gateway_config.get("debug", False)
+    debug=gateway.gateway_config.get("debug", False),
+    lifespan=lifespan
 )
 app = gateway.configure_app(app)
 
