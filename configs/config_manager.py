@@ -261,6 +261,21 @@ class UnifiedConfigManager:
         
         logger.info("All configurations reloaded")
     
+    def get_router_configs(self) -> List[Dict[str, Any]]:
+        """
+        Get router configurations from the YAML file
+        
+        Returns:
+            List of router configuration dictionaries
+        """
+        try:
+            routers_data = self.config_loader.config_data.get('routers', [])
+            logger.info(f"Loaded {len(routers_data)} router configurations")
+            return routers_data
+        except Exception as e:
+            logger.error(f"Failed to load router configurations: {e}")
+            return []
+    
     def get_config_status(self) -> Dict[str, Any]:
         """Get status of configuration management"""
         return {

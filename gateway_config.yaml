@@ -1,18 +1,39 @@
 gateway:
   host: "0.0.0.0"
   port: 7777
-  debug: true
+  debug: false
   title: "Unified API Gateway"
   version: "1.0.0"
   description: "Dynamic API Gateway with modular service integration"
+
+# Router configurations for external services
+routers:
+  - service_name: "docman_service"
+    module_path: "external/docman/src/api/main.py"
+    app_name: "app"
+    prefix: "/appv1"
+    config_name: "docman_service"
+    dependencies: []
+  
+  # Example of additional services (commented out)
+  # - service_name: "auth_service"
+  #   module_path: "external/auth/src/main.py"
+  #   app_name: "app"
+  #   prefix: "/auth"
+  #   config_name: "auth_service"
+  #   dependencies: []
   
 services:
   docman_service:
     # Document management service configuration
-    database_url: "postgresql://localhost/docman_db"
-    minio_endpoint: "localhost:9000"
+    postgres_host: "localhost" 
+    postgres_port: 1234
+    postgres_database: "docsdb"
+    postgres_username: "user"
+    postgres_password: "password"
+    minio_endpoint: "localhost:1235"
     minio_access_key: "minioadmin"
-    minio_secret_key: "minioadmin"
+    minio_secret_key: "minioadmin123"
     minio_bucket: "documents"
-    qdrant_url: "http://localhost:6333"
+    qdrant_url: "http://localhost:1237"
     log_level: "INFO"

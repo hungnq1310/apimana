@@ -171,6 +171,28 @@ make db-backup
 - **Gateway Status**: `GET /gateway/status`
 - **Services List**: `GET /gateway/services`
 
+### Performance Benchmarking
+
+The project includes comprehensive benchmarking tools using Locust:
+
+```bash
+# Quick benchmark demo
+./benchmark/demo.sh
+
+# Run specific benchmark tests
+./benchmark/run_benchmark.sh light      # Light load (5 users, 60s)
+./benchmark/run_benchmark.sh medium     # Medium load (20 users, 120s)
+./benchmark/run_benchmark.sh heavy      # Heavy load (50 users, 300s)
+
+# Interactive mode with web UI
+./benchmark/run_benchmark.sh interactive
+
+# Analyze results
+python3 benchmark/analyze_results.py --latest
+```
+
+For detailed benchmarking instructions, see [benchmark/README.md](benchmark/README.md).
+
 ## 🐛 Troubleshooting
 
 1. **Import errors**: Make sure all dependencies are installed: `pip install -r requirements.txt`

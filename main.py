@@ -40,17 +40,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Configuration for external services
-ROUTER_CONFIGS = [
-    # Document Management Service (docman)
-    RouterConfig(
-        service_name="docman_service",
-        module_path="external/docman/src/api/main.py",
-        app_name="app",
-        prefix="appv1",
-        config_name="docman_service"
-    )
-]
+def load_router_configs_from_yaml(config_manager: UnifiedConfigManager) -> List[RouterConfig]:
+    """
+    Load router configurations from YAML file and convert to RouterConfig objects.
+    
+    Args:
+        config_manager: The unified config manager instance
+        
+    Returns:
+        List of RouterConfig objects
+    """
+    router_configs = []
+    
+    try:
+        routers_data = config_manager.get_router_configs()
+        
+        for router_data in routers_data:
+            # Validate required fields
+            service_name = router_data.get('service_name')
+            module_path = router_data.get('module_path')
+            
+            if not service_name or not module_path:
+                logger.warning(f"Skipping router config with missing required fields: {router_data}")
+                continue
+            
+            # Create RouterConfig object from YAML data
+            router_config = RouterConfig(
+                service_name=service_name,
+                module_path=module_path,
+                app_name=router_data.get('app_name', 'app'),
+                prefix=router_data.get('prefix', ''),
+                config_name=router_data.get('config_name'),
+                dependencies=router_data.get('dependencies', [])
+            )
+            router_configs.append(router_config)
+            logger.info(f"Loaded router config for service: {router_config.service_name}")
+    
+    except Exception as e:
+        logger.error(f"Failed to load router configurations from YAML: {e}")
+        # Fallback to empty list
+        router_configs = []
+    
+    return router_configs
+
+
+# Global router configurations - will be loaded from YAML
+ROUTER_CONFIGS: List[RouterConfig] = []
 
 
 @asynccontextmanager
@@ -77,11 +112,17 @@ class APIGateway:
         
     def setup_components(self) -> None:
         """Setup configuration manager and router loader"""
+        global ROUTER_CONFIGS
+        
         logger.info("Setting up gateway components...")
         
         # Initialize configuration manager
         self.config_manager = UnifiedConfigManager(self.config_file)
         self.gateway_config = self.config_manager.get_gateway_config()
+        
+        # Load router configurations from YAML
+        ROUTER_CONFIGS = load_router_configs_from_yaml(self.config_manager)
+        logger.info(f"Loaded {len(ROUTER_CONFIGS)} router configurations from YAML")
         
         # Initialize router loader
         self.router_loader = DynamicRouterLoader()
