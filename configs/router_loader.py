@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass, field
 from pathlib import Path
 import logging
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -22,13 +22,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RouterConfig:
-    """Configuration for a single router to be loaded"""
+    """Configuration for a single FastAPI app to be loaded"""
     service_name: str
     module_path: str
-    router_name: str = "router"
+    app_name: str = "app"  # Changed from router_name to app_name
     prefix: str = ""
-    include_endpoints: Optional[Set[str]] = None
-    exclude_endpoints: Optional[Set[str]] = None
     config_name: Optional[str] = None
     dependencies: List[str] = field(default_factory=list)
     
@@ -46,7 +44,7 @@ class DynamicRouterLoader:
     """
     
     def __init__(self):
-        self.loaded_routers: Dict[str, APIRouter] = {}
+        self.loaded_apps: Dict[str, FastAPI] = {}  # Only support FastAPI apps
         self.failed_loads: Dict[str, str] = {}
         self.router_configs: List[RouterConfig] = []
     
@@ -56,15 +54,15 @@ class DynamicRouterLoader:
             sys.path.insert(0, str(Path(path).resolve()))
             logger.info(f"Added path to sys.path: {path}")
     
-    def load_router_from_path(self, config: RouterConfig) -> Optional[APIRouter]:
+    def load_app_from_path(self, config: RouterConfig) -> Optional[FastAPI]:
         """
-        Load a router from the specified module path
+        Load a FastAPI app from the specified module path
         
         Args:
             config: RouterConfig containing load configuration
             
         Returns:
-            APIRouter instance or None if loading fails
+            FastAPI app instance or None if loading fails
         """
         try:
             # Add external path if needed - handle special case for services with src/ structure
@@ -72,7 +70,7 @@ class DynamicRouterLoader:
             module_dir = module_path.parent
             
             # For services with src/ structure, add the root directory to path
-            # This handles cases like external/docman/src/api/routes/documents.py
+            # This handles cases like external/docman/src/api/main.py
             if 'src' in module_path.parts:
                 # Find the parent directory that contains 'src'
                 for i, part in enumerate(module_path.parts):
@@ -105,109 +103,55 @@ class DynamicRouterLoader:
                 # Load from module name
                 module = importlib.import_module(config.module_path)
             
-            # Get the router
-            if hasattr(module, config.router_name):
-                original_router = getattr(module, config.router_name)
+            # Get the FastAPI app
+            if hasattr(module, config.app_name):
+                app_item = getattr(module, config.app_name)
                 
-                # Filter endpoints if specified
-                if config.include_endpoints or config.exclude_endpoints:
-                    filtered_router = self._filter_router_endpoints(
-                        original_router, config
-                    )
-                    self.loaded_routers[config.service_name] = filtered_router
-                    logger.info(
-                        f"Successfully loaded and filtered router for {config.service_name}"
-                    )
-                    return filtered_router
+                # Check if it's a FastAPI app
+                if isinstance(app_item, FastAPI):
+                    self.loaded_apps[config.service_name] = app_item
+                    logger.info(f"Successfully loaded FastAPI app for {config.service_name}")
+                    return app_item
                 else:
-                    self.loaded_routers[config.service_name] = original_router
-                    logger.info(f"Successfully loaded router for {config.service_name}")
-                    return original_router
+                    raise TypeError(
+                        f"Object '{config.app_name}' in {config.module_path} is not a FastAPI app"
+                    )
             else:
                 raise AttributeError(
-                    f"Module {config.module_path} does not have attribute '{config.router_name}'"
+                    f"Module {config.module_path} does not have attribute '{config.app_name}'"
                 )
                 
         except Exception as e:
-            error_msg = f"Failed to load router for {config.service_name}: {str(e)}"
+            error_msg = f"Failed to load app for {config.service_name}: {str(e)}"
             logger.error(error_msg)
             self.failed_loads[config.service_name] = error_msg
             return None
     
-    def _filter_router_endpoints(
-        self, 
-        original_router: APIRouter, 
-        config: RouterConfig
-    ) -> APIRouter:
+    def load_app(self, app: FastAPI, config: RouterConfig) -> bool:
         """
-        Create a new router with filtered endpoints
-        
-        Args:
-            original_router: The original router to filter
-            config: RouterConfig with filtering rules
-            
-        Returns:
-            New APIRouter with filtered endpoints
-        """
-        new_router = APIRouter(
-            prefix=config.prefix
-        )
-        
-        for route in original_router.routes:
-            route_path = getattr(route, 'path', '')
-            route_name = getattr(route, 'name', '')
-            
-            # Check if endpoint should be included
-            should_include = True
-            
-            if config.include_endpoints:
-                should_include = (
-                    route_name in config.include_endpoints or
-                    route_path in config.include_endpoints or
-                    any(endpoint in route_path for endpoint in config.include_endpoints)
-                )
-            
-            if config.exclude_endpoints and should_include:
-                should_include = not (
-                    route_name in config.exclude_endpoints or
-                    route_path in config.exclude_endpoints or
-                    any(endpoint in route_path for endpoint in config.exclude_endpoints)
-                )
-            
-            if should_include:
-                new_router.routes.append(route)
-                logger.debug(f"Included endpoint: {route_path} ({route_name})")
-            else:
-                logger.debug(f"Excluded endpoint: {route_path} ({route_name})")
-        
-        return new_router
-    
-    def load_router(self, app: FastAPI, config: RouterConfig) -> bool:
-        """
-        Load and mount a single router to the FastAPI app
+        Load and mount a single FastAPI app to the main FastAPI app
         
         Args:
             app: FastAPI application instance
-            config: RouterConfig for the router to load
+            config: RouterConfig for the app to load
             
         Returns:
             bool: True if successful, False otherwise
         """
-        router = self.load_router_from_path(config)
-        if router:
-            app.include_router(
-                router,
-                prefix=config.prefix
-            )
+        service_app = self.load_app_from_path(config)
+        if service_app:
+            # Use mount to attach the service app
+            app.mount(config.prefix, service_app)
+            
             self.router_configs.append(config)
             logger.info(
-                f"Mounted router for {config.service_name} "
+                f"Mounted service {config.service_name} "
                 f"at prefix '{config.prefix}'"
             )
             return True
         return False
     
-    def load_all_routers(
+    def load_all_apps(
         self, 
         app: FastAPI, 
         configs: List[RouterConfig]
@@ -226,7 +170,7 @@ class DynamicRouterLoader:
         
         for config in configs:
             try:
-                success = self.load_router(app, config)
+                success = self.load_app(app, config)
                 results[config.service_name] = success
             except Exception as e:
                 logger.error(f"Error loading router {config.service_name}: {e}")
@@ -240,19 +184,19 @@ class DynamicRouterLoader:
         return results
     
     def get_status(self) -> Dict[str, Any]:
-        """Get status information about loaded routers"""
+        """Get status information about loaded apps"""
         return {
-            "loaded_routers": list(self.loaded_routers.keys()),
+            "loaded_apps": list(self.loaded_apps.keys()),
             "failed_loads": self.failed_loads,
-            "total_loaded": len(self.loaded_routers),
+            "total_loaded": len(self.loaded_apps),
             "total_failed": len(self.failed_loads)
         }
     
-    def get_router(self, service_name: str) -> Optional[APIRouter]:
-        """Get a loaded router by service name"""
-        return self.loaded_routers.get(service_name)
+    def get_app(self, service_name: str) -> Optional[FastAPI]:
+        """Get a loaded app by service name"""
+        return self.loaded_apps.get(service_name)
     
-    def reload_router(self, app: FastAPI, config: RouterConfig) -> bool:
+    def reload_app(self, app: FastAPI, config: RouterConfig) -> bool:
         """
         Reload a specific router (useful for development)
         
@@ -264,30 +208,36 @@ class DynamicRouterLoader:
             bool: True if successful, False otherwise
         """
         # Remove old router if exists
-        if config.service_name in self.loaded_routers:
-            del self.loaded_routers[config.service_name]
+        if config.service_name in self.loaded_apps:
+            del self.loaded_apps[config.service_name]
             
         # Clear failed loads for this service
         if config.service_name in self.failed_loads:
             del self.failed_loads[config.service_name]
         
+        # Note: For mounting, we would need to recreate the app to properly reload
+        # This is a limitation of FastAPI mounting - you can't easily unmount
+        logger.warning(
+            f"Reloading mounted services requires app restart for {config.service_name}"
+        )
+        
         # Reload the router
-        return self.load_router(app, config)
+        return self.load_app(app, config)
 
 
-def create_test_router() -> APIRouter:
-    """Create a test router for development/testing purposes"""
-    test_router = APIRouter()
+def create_test_app() -> FastAPI:
+    """Create a test FastAPI app for development/testing purposes"""
+    test_app = FastAPI(title="Test Service")
     
-    @test_router.get("/test")
+    @test_app.get("/test")
     async def test_endpoint():
         return {"message": "Test endpoint from dynamic router loader"}
     
-    @test_router.get("/health")
+    @test_app.get("/health")
     async def health_check():
         return {"status": "healthy", "service": "test_service"}
     
-    return test_router
+    return test_app
 
 
 # Example usage and testing
@@ -298,18 +248,18 @@ if __name__ == "__main__":
     app = FastAPI(title="Router Loader Test")
     loader = DynamicRouterLoader()
     
-    # Create and load test router
+    # Create and load test app
     test_config = RouterConfig(
         service_name="test_service",
-        module_path="test_router",  # This would normally be a file path
-        router_name="test_router",
+        module_path="test_app",  # This would normally be a file path
+        app_name="test_app",
         prefix="/test"
     )
     
-    # For testing, we'll manually add the test router
-    test_router = create_test_router()
-    loader.loaded_routers["test_service"] = test_router
-    app.include_router(test_router, prefix="/test", tags=["Test"])
+    # For testing, we'll manually add the test app
+    test_app = create_test_app()
+    loader.loaded_apps["test_service"] = test_app
+    app.mount("/test", test_app)
     
-    print("Test router loaded successfully!")
+    print("Test app mounted successfully!")
     print(f"Status: {loader.get_status()}")
