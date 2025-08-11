@@ -1,0 +1,14 @@
+# Requirements for API Gateway Benchmarking
+# Install with: pip install -r benchmark/requirements.txt
+
+# Core dependencies
+locust>=2.15.0
+requests>=2.31.0
+
+# Optional dependencies for enhanced analysis
+pandas>=1.5.0
+matplotlib>=3.5.0
+numpy>=1.21.0
+
+# For JSON processing and CSV handling
+jsonschema>=4.0.0
